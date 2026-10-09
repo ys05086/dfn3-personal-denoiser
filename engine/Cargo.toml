@@ -1,0 +1,16 @@
+[package]
+name = "pdn-engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "pdn_engine"
+# rlib for the plugin, cdylib (pdn_engine.dll) for the app
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+# libDF, the DeepFilterNet runtime, with the public DeepFilterNet3 model built in
+df = { git = "https://github.com/Rikorose/DeepFilterNet.git", tag = "v0.5.6", package = "deep_filter", default-features = false, features = ["tract", "default-model"] }
+ndarray = "0.15"

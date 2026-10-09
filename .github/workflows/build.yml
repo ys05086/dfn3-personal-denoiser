@@ -1,0 +1,55 @@
+name: Build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  plugin:
+    # The VST3 and CLAP plugins and the engine DLL the app runs, with the engine's tests and two plugin
+    # validators.
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release -p pdn-engine
+      - run: cargo build --release -p pdn-engine
+      - run: cargo xtask bundle personal_denoiser --release
+      - name: Validate the VST3 (pluginval)
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'pluginval.zip'
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne 'C08E61CE3B96DB41636F8EC7E76F4C7E2C13EBDAC7FA1B5A1F52B4F32EC715AB') { throw 'pluginval hash mismatch' }
+          $dir = Join-Path $env:RUNNER_TEMP 'pluginval'
+          Expand-Archive $zip -DestinationPath $dir
+          $logs = Join-Path $env:RUNNER_TEMP 'pluginval-logs'
+          New-Item -ItemType Directory -Force $logs | Out-Null
+          $plugin = (Resolve-Path 'target/bundled/Personal Denoiser.vst3').Path
+          $run = Start-Process -FilePath (Join-Path $dir 'pluginval.exe') -Wait -PassThru -NoNewWindow -ArgumentList `
+            '--strictness-level', '5', '--skip-gui-tests', '--timeout-ms', '300000', '--output-dir', "`"$logs`"", '--validate', "`"$plugin`""
+          Get-ChildItem $logs -File | ForEach-Object { Get-Content $_.FullName }
+          if ($run.ExitCode -ne 0) { throw "pluginval failed ($($run.ExitCode))" }
+      - name: Validate the CLAP (clap-validator)
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'clap-validator.zip'
+          Invoke-WebRequest https://github.com/free-audio/clap-validator/releases/download/0.4.1/clap-validator-0.4.1-127-g152b982-windows.zip -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne 'D935C3AF0A45C3911EA2E900F4AA5D6709DAC82BB485F0C4CE28648AB2CD0C10') { throw 'clap-validator hash mismatch' }
+          $dir = Join-Path $env:RUNNER_TEMP 'clap-validator'
+          Expand-Archive $zip -DestinationPath $dir
+          $exe = Get-ChildItem $dir -Recurse -Filter 'clap-validator.exe' | Select-Object -First 1
+          & $exe.FullName validate 'target/bundled/Personal Denoiser.clap'
+          if ($LASTEXITCODE -ne 0) { throw "clap-validator failed ($LASTEXITCODE)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin
+          path: |
+            target/bundled/Personal Denoiser.vst3
+            target/bundled/Personal Denoiser.clap
+            target/release/pdn_engine.dll
+            Cargo.lock

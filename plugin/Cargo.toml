@@ -1,0 +1,18 @@
+[package]
+name = "personal_denoiser"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pdn-engine = { path = "../engine" }
+nice-plug = "=0.4.2"
+nice-plug-egui = "=0.5.1"
+egui = { version = "0.36", default-features = false, features = ["default_fonts"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
