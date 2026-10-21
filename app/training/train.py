@@ -90,7 +90,7 @@ def load(path) -> np.ndarray:
 
 def load_folder(folder: Path) -> dict[str, np.ndarray]:
     files = sorted(p for p in folder.glob("*") if p.suffix.lower() in (".wav", ".flac"))
-    return {p.stem: load(p) for p in files}
+    return {p.name: load(p) for p in files}
 
 
 def split(x, held_out=0.25):
@@ -106,7 +106,7 @@ def mixer(clean, noises, seed):
     def crop(x):
         if len(x) <= SEGMENT:
             return np.pad(x, (0, SEGMENT - len(x)))
-        start = int(rng.integers(0, len(x) - SEGMENT))
+        start = int(rng.integers(0, len(x) - SEGMENT + 1))
         return x[start:start + SEGMENT]
 
     def sample():
@@ -146,6 +146,8 @@ def train(base, clean, noises, steps, batch, lr, device, seed):
         spec, erb_feat, spec_feat = df_features(mix, fresh_state(), 96, device=device)
         target, _, _ = df_features(c, fresh_state(), 96, device=device)
         loss = loss_fn(model(spec, erb_feat, spec_feat)[0], target)
+        if not torch.isfinite(loss):
+            raise RuntimeError("학습 손실이 유효하지 않습니다. 녹음의 음량과 내용을 확인해 주세요.")
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -225,11 +227,16 @@ def compare(models, voices, noises, snr=10.0):
     cut = {name: {label: [] for label in models} for name in voices}
     for vname, v in voices.items():
         fv = frame_db(v)
-        audible = fv > np.percentile(fv[fv > -110], 10) + 10 if (fv > -110).any() else np.ones_like(fv, bool)
+        audible = fv > np.percentile(fv[fv > -110], 10) + 10 if (fv > -110).any() else np.zeros_like(fv, bool)
+        if not audible.any():
+            audible = fv > -80
+        if not audible.any():
+            continue
         for n in noises.values():
             n = np.resize(n, len(v))
             active = np.abs(v) > 1e-4
-            n = (n * np.sqrt(np.mean(v[active] ** 2) / ((np.mean(n ** 2) + 1e-12) * 10 ** (snr / 10)))).astype(np.float32)
+            reference = np.mean(v[active] ** 2) if active.any() else np.mean(v ** 2)
+            n = (n * np.sqrt(reference / ((np.mean(n ** 2) + 1e-12) * 10 ** (snr / 10)))).astype(np.float32)
             for label, run in models.items():
                 fo = frame_db(run((v + n).astype(np.float32))[:len(v)])[:len(fv)]
                 cut[vname][label].append(float(np.mean((fo - fv[:len(fo)])[audible[:len(fo)]] < -10)))
@@ -237,11 +244,17 @@ def compare(models, voices, noises, snr=10.0):
                                                   / (np.sum(n.astype(np.float64) ** 2) + 1e-20)))
                        for label, run in models.items()} for name, n in noises.items()}
     return {"snr_db": snr,
-            "voice_cut": {name: {label: float(np.mean(v)) for label, v in r.items()} for name, r in cut.items()},
+            "voice_cut": {name: {label: float(np.mean(v)) for label, v in r.items()} for name, r in cut.items() if all(r.values())},
             "noise_db": noise_db}
 
 
 def main():
+    if "--check-env" in sys.argv:
+        import onnx
+        from df.enhance import init_df
+        fresh_state()
+        report("environment", device="cuda" if torch.cuda.is_available() else "cpu", torch=torch.__version__)
+        return
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--takes", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
@@ -255,11 +268,13 @@ def main():
     args = parser.parse_args()
     started = time.time()
     try:
+        if args.steps <= 0 or args.batch <= 0 or args.lr <= 0:
+            raise ValueError("steps, batch and learning rate must be positive")
         device = "cuda" if torch.cuda.is_available() else "cpu"
         report("prepare", device=device, gpu=torch.cuda.get_device_name(0) if device == "cuda" else None)
         voices, noises = load_folder(args.takes / "voice"), load_folder(args.takes / "noise")
-        voices = {k: x for k, x in voices.items() if len(x) >= 2 * RATE}
-        noises = {k: x for k, x in noises.items() if len(x) >= RATE and np.sqrt(np.mean(x ** 2)) >= 1e-4}
+        voices = {k: x for k, x in voices.items() if len(x) >= 2 * RATE and np.isfinite(x).all() and np.max(np.abs(x)) > 1e-4}
+        noises = {k: x for k, x in noises.items() if len(x) >= 2 * RATE and np.isfinite(x).all() and np.sqrt(np.mean(x ** 2)) >= 1e-4}
         if not voices or not noises:
             raise RuntimeError("need at least one voice take (2 s or more) and one noise take that is not silent")
         base = ensure_base(args.cache)
@@ -294,7 +309,11 @@ def main():
             if held_voice and held_noise:
                 info["compare"] = compare({"public": runner(public), "personal": runner(model)}, held_voice, held_noise)
 
-        os.replace(staging, args.out / "model.tar.gz")
+        # Keep the last working model available for manual rollback.
+        current = args.out / "model.tar.gz"
+        if current.exists():
+            shutil.copy2(current, args.out / "model.previous.tar.gz")
+        os.replace(staging, current)
         (args.out / "model.tar.gz.sha256").write_text(info["sha256"] + "\n", encoding="ascii")
         (args.out / "model.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
         report("done", 1, 1, info=info)

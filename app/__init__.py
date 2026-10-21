@@ -1,0 +1,1 @@
+"""Personal Denoiser desktop application."""

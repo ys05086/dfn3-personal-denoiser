@@ -39,14 +39,14 @@ impl Engine {
     }
 
     /// A model archive in memory.
-    pub fn from_archive(bytes: &[u8]) -> Result<Self, String> {
+    pub fn from_archive(bytes: &'static [u8]) -> Result<Self, String> {
         guarded(|| Self::new(DfParams::from_bytes(bytes).map_err(|e| format!("not a model archive: {e:#}"))?))
     }
 
-    /// A model archive on disk, read whole first so the file is not held open.
+    /// A model archive on disk. DfParams reads it fully and closes the file before returning.
     pub fn from_file(path: &Path) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        Self::from_archive(&bytes)
+        guarded(|| Self::new(DfParams::new(path.to_owned())
+            .map_err(|e| format!("{}: {e:#}", path.display()))?))
     }
 
     fn new(params: DfParams) -> Result<Self, String> {
@@ -259,10 +259,9 @@ mod tests {
         assert!(Engine::from_archive(b"not a model").is_err());
         assert!(Engine::from_file(Path::new("missing/model.tar.gz")).is_err());
         // a valid gzip tar without the model files
-        let mut tar = tar_without_model();
-        assert!(Engine::from_archive(&tar).is_err());
-        tar.truncate(10);
-        assert!(Engine::from_archive(&tar).is_err());
+        let tar = Box::leak(tar_without_model().into_boxed_slice());
+        assert!(Engine::from_archive(tar).is_err());
+        assert!(Engine::from_archive(&tar[..10]).is_err());
     }
 
     /// An empty tar (two zero blocks) gzipped as one stored deflate block: header, block, CRC-32, size.

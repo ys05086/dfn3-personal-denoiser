@@ -5,3 +5,6 @@ __pycache__/
 *.spec
 *.wav
 *.flac
+/.venv/
+/.tools/
+/artifacts/

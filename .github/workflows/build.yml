@@ -18,6 +18,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --release -p pdn-engine
       - run: cargo build --release -p pdn-engine
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test and package desktop app
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install -r app/requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop dependencies failed' }
+          .venv/Scripts/python.exe -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop tests failed' }
+          ./build_app.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: personal-denoiser-desktop
+          path: dist/Personal Denoiser/
       - run: cargo xtask bundle personal_denoiser --release
       - name: Validate the VST3 (pluginval)
         shell: pwsh

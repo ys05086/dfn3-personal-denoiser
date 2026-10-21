@@ -13,6 +13,7 @@ import sys
 APP_NAME = "Personal Denoiser"
 FROZEN = getattr(sys, "frozen", False)
 BUNDLE = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
+RESOURCES = Path(getattr(sys, "_MEIPASS", BUNDLE))
 REPO = None if FROZEN else BUNDLE.parent
 
 
@@ -30,7 +31,7 @@ MODEL_INFO = DATA / "model.json"
 SETTINGS = DATA / "settings.json"
 LOG = DATA / "app.log"
 
-TRAINING_SCRIPT = BUNDLE / "training" / "train.py"
+TRAINING_SCRIPT = RESOURCES / "training" / "train.py"
 ENV = LOCAL / "env"
 CACHE = LOCAL / "cache"
 
@@ -38,7 +39,7 @@ CACHE = LOCAL / "cache"
 def engine_dll() -> Path | None:
     """pdn_engine.dll: next to the program, or, when run from the source tree, the CI build unpacked into
     the repository (target/release)."""
-    candidates = [BUNDLE / "pdn_engine.dll"]
+    candidates = [BUNDLE / "pdn_engine.dll", RESOURCES / "pdn_engine.dll"]
     if REPO:
         candidates.append(REPO / "target" / "release" / "pdn_engine.dll")
     return next((p for p in candidates if p.is_file()), None)
