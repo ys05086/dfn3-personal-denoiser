@@ -313,7 +313,8 @@ impl ClapPlugin for PersonalDenoiser {
 }
 
 impl Vst3Plugin for PersonalDenoiser {
-    const VST3_CLASS_ID: [u8; 16] = *b"PersonalDenoiser1";
+    // Stable 16-byte identifier; the display name above may contain spaces.
+    const VST3_CLASS_ID: [u8; 16] = *b"PersonalDenoiser";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx, Vst3SubCategory::Restoration];
 }
 
